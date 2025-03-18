@@ -17,8 +17,8 @@ export async function createApplication (config : ApplicationConfig): Promise<Gi
   return app;
 }
 
-export async function revokeAccessToken(token: string, baseUrl?: string) {
-  const client = getOctokit(token, baseUrl);
+export async function revokeAccessToken(token: string) {
+  const client = getOctokit(token);
 
   try {
     const resp = await client.rest.apps.revokeInstallationAccessToken();

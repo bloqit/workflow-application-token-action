@@ -12,19 +12,9 @@ async function revokeToken() {
 
     // Mask the token to prevent exposure in logs
     core.setSecret(token);
-
-    const revokeToken = core.getBooleanInput('revoke_token');
-    if (!revokeToken) {
-      core.info(`GitHub Application revocation skipped. Token will expire automatically.`);
-      return;
-    }
-
     core.info(`Performing GitHub Application token revocation...`);
 
-    const baseUrl = core.getInput('github_api_base_url');
-
-
-    const revoked = await revokeAccessToken(token, baseUrl);
+    const revoked = await revokeAccessToken(token);
 
     if (revoked) {
       core.info(`Token has been successfully revoked.`);
