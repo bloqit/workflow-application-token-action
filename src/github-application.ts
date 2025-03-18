@@ -1,5 +1,4 @@
-import { URL } from 'node:url';
-import { fetch as undiciFetch, ProxyAgent } from 'undici';
+import { fetch as undiciFetch } from 'undici';
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import * as jwt from 'jsonwebtoken';
@@ -9,20 +8,17 @@ export type ApplicationConfig = {
   applicationId: string,
   privateKey: string,
   baseApiUrl?: string,
-  timeout?: number,
-  proxy?: string,
-  ignoreEnvironmentProxy?: boolean
+  timeout?: number
 }
 
 export async function createApplication (config : ApplicationConfig): Promise<GitHubApplication> {
-  const app = new GitHubApplication(config.privateKey, config.applicationId, config.baseApiUrl);
-  await app.connect(config.timeout, config.proxy, config.ignoreEnvironmentProxy);
+  const app = new GitHubApplication(config.privateKey, config.applicationId);
+  await app.connect(config.timeout);
   return app;
 }
 
-export async function revokeAccessToken(token: string, baseUrl?: string, proxy?: string, ignoreEnvironmentProxy: boolean = false) {
-  // The token being provided is the one to be invalidated
-  const client = getOctokit(token, baseUrl, proxy, ignoreEnvironmentProxy);
+export async function revokeAccessToken(token: string, baseUrl?: string) {
+  const client = getOctokit(token, baseUrl);
 
   try {
     const resp = await client.rest.apps.revokeInstallationAccessToken();
@@ -40,7 +36,6 @@ type GitHubApplicationConfig = {
   id: string,
 }
 
-//TODO these are only the field that we absolutely need, there are more that might make this more useful as an object if we need to inthe future.
 type GitHubApplicationMetadata = {
   name: string,
   id: number,
@@ -59,18 +54,14 @@ export class GitHubApplication {
 
   private _config: GitHubApplicationConfig;
 
-  private _githubApiUrl: string;
-
-  constructor(privateKey, applicationId, baseApiUrl) {
+  constructor(privateKey, applicationId) {
     this._config = {
       privateKey: new PrivateKey(_validateVariableValue('privateKey', privateKey)),
       id: _validateVariableValue('applicationId', applicationId),
     };
-
-    this._githubApiUrl = baseApiUrl;
   }
 
-  async connect(validSeconds: number = 60, proxy?: string, ignoreEnvironmentProxy: boolean = false): Promise<GitHubApplicationMetadata> {
+  async connect(validSeconds: number = 60): Promise<GitHubApplicationMetadata> {
     const self = this
       , secondsNow = Math.floor(Date.now() / 1000)
       , expireInSeconds = validSeconds
@@ -83,14 +74,13 @@ export class GitHubApplication {
     };
 
     const token = jwt.sign(payload, this.privateKey, { algorithm: 'RS256' });
-    this._client = getOctokit(token, this._githubApiUrl, proxy, ignoreEnvironmentProxy);
+    this._client = getOctokit(token);
 
     core.debug(`Attempting to fetch GitHub Application for the provided credentials...`);
     try {
       const resp = await this.client.request('GET /app', {headers: {'X-GitHub-Api-Version': '2022-11-28'}});
 
       if (resp.status === 200) {
-        // Store the metadata for debug purposes
         self._metadata = resp.data;
         core.debug(`  GitHub Application resolved: ${JSON.stringify(resp.data)}`);
         return resp.data;
@@ -103,10 +93,6 @@ export class GitHubApplication {
       reportErrorDetails(err);
       throw new Error(errorMessage);
     }
-  }
-
-  get githubApiBaseUrl() {
-    return this._githubApiUrl;
   }
 
   get metadata() {
@@ -218,17 +204,10 @@ export class GitHubApplication {
   }
 }
 
-function getOctokit(token: string, baseApiUrl?: string, proxy?: string, ignoreEnvironmentProxy?: boolean) {
+function getOctokit(token: string, baseApiUrl?: string) {
   const baseUrl = getApiBaseUrl(baseApiUrl);
 
-  const proxyAgent = getProxyAgent(baseUrl, proxy, ignoreEnvironmentProxy);
-  const fetchClient = (url, options) => {
-    const mergedOptions = {...options};
-    if (proxyAgent) {
-      mergedOptions['dispatcher'] = proxyAgent
-    }
-    return undiciFetch(url, mergedOptions)
-  }
+  const fetchClient = (url, options) => undiciFetch(url, options);
 
   const octokitOptions = {
     baseUrl: baseUrl,
@@ -252,71 +231,6 @@ function _validateVariableValue(variableName: string, value?: string) {
     throw new Error(`${variableName} must be provided contained no valid characters other than whitespace`)
   }
   return result;
-}
-
-function getProxyAgent(baseUrl: string, proxy?: string, ignoreEnvironmentProxy?: boolean): ProxyAgent | undefined {
-  let proxyUri: string | undefined = undefined;
-
-  if (proxy && proxy.trim().length > 0) {
-    // User has an explict proxy set, use it
-    core.info(`explicit proxy specified as '${proxy}'`);
-    //TODO check for explict exclusion on no_proxy?
-    proxyUri = proxy;
-  } else {
-    // When loading from the environment, also respect no_proxy settings
-    const envProxy = process.env.http_proxy
-      || process.env.HTTP_PROXY
-      || process.env.https_proxy
-      || process.env.HTTPS_PROXY
-      ;
-
-    if (envProxy && envProxy.trim().length > 0) {
-      core.info(`environment proxy specified as '${envProxy}'`);
-
-      if (ignoreEnvironmentProxy) {
-        core.info(`Action has been configured to ignore environment proxy set. Not using the proxy from the environment and going direct for GitHub API calls...`);
-      } else {
-        const noProxy = process.env.no_proxy || process.env.NO_PROXY;
-        if (!noProxy) {
-          proxyUri = envProxy;
-        } else {
-          core.info(`environment no_proxy set as '${noProxy}'`);
-          if (proxyExcluded(noProxy, baseUrl)) {
-            core.info(`environment proxy excluded from no_proxy settings`);
-          } else {
-            core.info(`using proxy '${envProxy}' for GitHub API calls`)
-            proxyUri = envProxy;
-          }
-        }
-      }
-    }
-  }
-
-  if (proxyUri) {
-    return new ProxyAgent({uri: proxyUri});
-  }
-  return undefined;
-}
-
-function proxyExcluded(noProxy: string, baseUrl: string) {
-  if (noProxy) {
-    const noProxyHosts = noProxy.split(',').map(part => part.trim());
-    core.debug(`noProxyHosts = ${JSON.stringify(noProxyHosts)}`);
-    core.debug(`parsing baseURL: '${baseUrl}'`);
-    try {
-      const parsedBaseUrl = new URL(baseUrl);
-      core.debug(`parsed = ${parsedBaseUrl}`);
-      core.debug(`base url host = '${parsedBaseUrl.host}'`);
-
-      return noProxyHosts.indexOf(parsedBaseUrl.host) > -1;
-    } catch (err) {
-      core.error(`Failure in parsing the URL object`);
-      throw err;
-    }
-    // const parsedBaseUrl = url.parse(baseUrl);
-    // core.debug(`parsed host: ${[parsedBaseUrl.host]}`);
-    // return noProxyHosts.indexOf(parsedBaseUrl.host) > -1;
-  }
 }
 
 function getApiBaseUrl(url?: string): string {

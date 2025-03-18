@@ -1,8 +1,7 @@
 ---
 
-name: workflow-application-token-action
+name: bloqit-workflow-application-token-action
 description: Obtain a temporary access token for a GitHub Application when running in a GitHub Actions Workflow.
-author: peter-murray
 
 inputs:
   application_private_key:
@@ -12,32 +11,6 @@ inputs:
   application_id:
     description: GitHub Application ID value.
     required: true
-
-  permissions:
-    description: The permissions to request e.g. issues:read,secrets:write,packages:read. Defaults to all available permissions
-    required: false
-
-  organization:
-    description: The GitHub Organization to get the application installation for, if not specified will use the current repository instead
-    required: false
-
-  github_api_base_url:
-    description: The GitHub API base URL to use, no needed it working within the same GitHub instance as the workflow as it will get picked up from the environment
-    required: false
-
-  https_proxy:
-    description: Option proxy server for making the requests
-    required: false
-
-  ignore_environment_proxy:
-    description: Optional flag to forcibly ignore the proxy server setting in the environment
-    required: false
-    default: 'false'
-
-  revoke_token:
-    description: Flag to revoke the token after the job is complete, defaults to 'false', set to 'true' to revoke in the post job processing.
-    required: false
-    default: 'false'
 
 outputs:
   token:
