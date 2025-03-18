@@ -1,26 +1,31 @@
 import * as core from '@actions/core';
-import {createApplication, GitHubApplication} from '../github-application.js';
-
+import { createApplication, GitHubApplication } from '../github-application.js';
 
 async function run() {
   let app: GitHubApplication;
 
   try {
-    const privateKey = getRequiredInputValue('application_private_key')
-      , applicationId = getRequiredInputValue('application_id')
-      , githubApiBaseUrl = core.getInput('github_api_base_url')
-      , httpsProxy = core.getInput('https_proxy')
-      , ignoreProxy = core.getBooleanInput('ignore_environment_proxy')
-      ;
+    const privateKey = getRequiredInputValue('application_private_key');
+    const applicationId = getRequiredInputValue('application_id');
+    const githubApiBaseUrl = core.getInput('github_api_base_url');
+    const httpsProxy = core.getInput('https_proxy');
+    const ignoreProxy = core.getBooleanInput('ignore_environment_proxy');
+
+    core.setSecret(privateKey);
+
+    if (!/^[0-9]+$/.test(applicationId)) {
+      throw new Error('Invalid application ID format. It must be a numeric string.');
+    }
+
     app = await createApplication({
       privateKey,
       applicationId,
       baseApiUrl: githubApiBaseUrl,
-      proxy: httpsProxy,
+      proxy: validateProxy(httpsProxy),
       ignoreEnvironmentProxy: ignoreProxy
     });
-  } catch(err) {
-    fail(err, 'Failed to initialize GitHub Application connection using provided id and private key');
+  } catch (err) {
+    fail(err, 'Failed to initialize GitHub Application connection using provided ID and private key');
     return;
   }
 
@@ -31,62 +36,38 @@ async function run() {
       const userSpecifiedOrganization = core.getInput('organization');
       const repository = process.env['GITHUB_REPOSITORY'];
 
-      if (!repository || repository.trim().length === 0) {
-        throw new Error(`The repository value was missing from the environment as 'GITHUB_REPOSITORY'`);
+      if (!repository || !repository.includes('/')) {
+        throw new Error(`Invalid GITHUB_REPOSITORY format. Expected 'owner/repo'.`);
       }
 
-      const repoParts = repository.split('/');
-
+      const [owner, repo] = repository.split('/');
       let installationId;
 
       if (userSpecifiedOrganization) {
         core.info(`Obtaining application installation for organization: ${userSpecifiedOrganization}`);
-
-        // use the organization specified to get the installation
         const installation = await app.getOrganizationInstallation(userSpecifiedOrganization);
-        if (installation && installation.id) {
-          installationId = installation.id;
-        } else {
-          fail(undefined, `GitHub Application is not installed on the specified organization: ${userSpecifiedOrganization}`);
-        }
+        installationId = installation?.id || fail(undefined, `GitHub Application is not installed on the specified organization: ${userSpecifiedOrganization}`);
       } else {
         core.info(`Obtaining application installation for repository: ${repository}`);
-
-        // fallback to getting a repository installation
-        const installation = await app.getRepositoryInstallation(repoParts[0], repoParts[1]);
-        if (installation && installation.id) {
-          installationId = installation.id;
-        } else {
-          fail(undefined, `GitHub Application is not installed on repository: ${repository}`);
-        }
+        const installation = await app.getRepositoryInstallation(owner, repo);
+        installationId = installation?.id || fail(undefined, `GitHub Application is not installed on repository: ${repository}`);
       }
 
       if (installationId) {
-        const permissions = {};
-        // Build up the list of requested permissions
-        let permissionInput = core.getInput("permissions");
-        if (permissionInput) {
-          for (let p of permissionInput.split(",")){
-            let [pName, pLevel] = p.split(":", 2);
-            permissions[pName.trim()] = pLevel.trim();
-          }
-          core.info(`Requesting limitation on GitHub Application permissions to only: ${JSON.stringify(permissions)}`);
-        }
+        const permissions = parsePermissions(core.getInput("permissions"));
+        core.info(`Requesting GitHub Application token with permissions: ${JSON.stringify(permissions)}`);
 
         const accessToken = await app.getInstallationAccessToken(installationId, permissions);
 
-        // Register the secret to mask it in the output
         core.setSecret(accessToken.token);
         core.setOutput('token', accessToken.token);
-        core.info(JSON.stringify(accessToken));
-        core.info(`Successfully generated an access token for application.`)
+        core.info('Successfully generated an access token for the application.');
 
         if (core.getBooleanInput('revoke_token')) {
-          // Store the token for post state invalidation of it once the job is complete
           core.saveState('token', accessToken.token);
         }
       } else {
-        fail(undefined, 'No installation of the specified GitHub application was able to be retrieved.');
+        fail(undefined, 'No installation of the specified GitHub application was retrieved.');
       }
     } catch (err) {
       fail(err);
@@ -96,17 +77,33 @@ async function run() {
 run();
 
 function fail(err: any, message?: string) {
-  core.error(err);
-  // Provide a debug controllable stack trace
-  core.debug(err.stack);
-
-  if (message) {
-    core.setFailed(message);
-  } else {
-    core.setFailed(err.message);
+  if (err) {
+    core.error(err);
+    core.debug(err.stack);
   }
+  core.setFailed(message || err?.message || 'An unknown error occurred');
 }
 
 function getRequiredInputValue(key: string) {
-  return core.getInput(key, {required: true});
+  return core.getInput(key, { required: true }).trim();
+}
+
+function parsePermissions(permissionInput: string) {
+  const permissions = {};
+  if (permissionInput) {
+    for (const p of permissionInput.split(",")) {
+      const [pName, pLevel] = p.split(":", 2);
+      if (pName && pLevel) {
+        permissions[pName.trim()] = pLevel.trim();
+      }
+    }
+  }
+  return Object.keys(permissions).length > 0 ? permissions : { contents: 'read' }; 
+}
+
+function validateProxy(proxy: string | undefined) {
+  if (proxy && !/^https?:\/\//.test(proxy)) {
+    throw new Error('Invalid proxy URL format. It must start with http:// or https://');
+  }
+  return proxy;
 }

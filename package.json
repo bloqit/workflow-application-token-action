@@ -38,6 +38,6 @@
     "@vercel/ncc": "^0.38.2",
     "chai": "^4.3.4",
     "typescript": "^5.5.3",
-    "vitest": "^2.0.2"
+    "vitest": ">=2.1.9"
   }
 }
