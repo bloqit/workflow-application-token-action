@@ -1,6 +1,6 @@
 {
   "name": "Workspace",
-  "image": "ghcr.io/octodemo/development-containers/javascript-nodejs-20:base-202408-r2",
+  "image": "ghcr.io/octodemo/development-containers/javascript-nodejs-24:base-202604-r1",
   "postCreateCommand": "npm install",
   "customizations": {
     "vscode": {
@@ -9,7 +9,7 @@
         "redhat.vscode-yaml",
         "swellaby.node-pack",
         "vitest.explorer"
-      ],
+      ]
     }
   }
 }
